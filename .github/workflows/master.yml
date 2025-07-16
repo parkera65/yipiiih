@@ -1,0 +1,80 @@
+name: Automated Commit
+
+on:
+  push:
+    branches: [master]
+
+  schedule:
+    - cron: '*/5 * * * *'
+
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update_commit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      # --- BAGIAN YANG DIPERBAIKI ---
+      - name: Setup Git Configuration
+        run: |
+          git config user.email "${{ github.repository_owner }}@users.noreply.github.com"
+          git config user.name "${{ github.repository_owner }}"
+      # --- AKHIR BAGIAN YANG DIPERBAIKI ---
+
+      - name: Update Timestamp File and Set Output
+        id: timestamp_update
+        run: |
+          today=$(date '+%Y-%m-%d')
+          MAX_COMMITS_PER_DAY=1000
+
+          if [ -f DAILY_COMMIT_COUNT.txt ]; then
+            read -r last_count last_date < DAILY_COMMIT_COUNT.txt
+            if [ "$last_date" == "$today" ]; then
+              current_day_count=$last_count
+            else
+              current_day_count=0
+            fi
+          else
+            current_day_count=0
+          fi
+
+          if [ "$current_day_count" -ge "$MAX_COMMITS_PER_DAY" ]; then
+            echo "Limit $MAX_COMMITS_PER_DAY commits reached for today ($today). Skipping commit."
+            echo "commit_skipped=true" >> $GITHUB_OUTPUT
+            echo "$current_day_count $last_date" > DAILY_COMMIT_COUNT.txt
+          else
+            new_day_count=$((current_day_count + 1))
+            echo "$new_day_count $today" > DAILY_COMMIT_COUNT.txt
+            current_time=$(date '+%Y-%m-%d %H:%M:%S')
+            echo "Updated on $current_time (Daily Commit #$new_day_count)" > TIMESTAMP.txt
+            echo "current_time=$current_time" >> $GITHUB_OUTPUT
+            echo "commit_count=$new_day_count" >> $GITHUB_OUTPUT
+            echo "commit_skipped=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Prepare Commit
+        run: |
+          if [ "${{ steps.timestamp_update.outputs.commit_skipped }}" == "true" ]; then
+            echo "Skipping commit as per daily limit."
+            exit 0
+          fi
+          commit_messages=("Update: ⏰" "Refresh: 🔄" "Renew: 🌟" "Revise: 📝" "Amend: 🛠" "Adjust: 🔧" "Change: 📈" "Modify: 🖊" "Transform: 🌀" "Revamp: 🌈")
+          random_msg=${commit_messages[$RANDOM % ${#commit_messages[@]}]}
+          git add TIMESTAMP.txt DAILY_COMMIT_COUNT.txt
+          git commit -m "$random_msg - Daily Commit #${{ steps.timestamp_update.outputs.commit_count }} at ${{ steps.timestamp_update.outputs.current_time }}" || echo "No changes to commit."
+
+      - name: GitHub Push
+        uses: ad-m/github-push-action@v0.6.0
+        with:
+          directory: '.'
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+        if: steps.timestamp_update.outputs.commit_skipped == 'false'
